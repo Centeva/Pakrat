@@ -9,18 +9,18 @@ namespace Packrat
 {
     public class Program
     {
-        static void Main(string[] args)
+        static int Main(string[] args)
         {
             var parsedArgs = ParseArgs(args);
             if (parsedArgs == null)
             {
-                return;
+                return 1;
             }
 
             if (!Directory.Exists(parsedArgs.Folder))
             {
                 Console.WriteLine("The specified folder does not exist");
-                return;
+                return 2;
             }
 
             if (string.Equals(parsedArgs.Verb, "pack", StringComparison.OrdinalIgnoreCase))
@@ -34,7 +34,10 @@ namespace Packrat
             else
             {
                 Console.WriteLine("first argument must be either pack or unpack");
+                return 3;
             }
+
+            return 0;
         }
 
         private static Args ParseArgs(string[] args)
@@ -56,15 +59,15 @@ namespace Packrat
                         }
                     });
 
-                if (parseSuccess)
+                if (!parseSuccess)
                 {
                     PrintUsage();
                     return null;
                 }
             }
-            catch
+            catch (Exception ex)
             {
-                PrintUsage();
+                Console.WriteLine(ex);
                 return null;
             }
 

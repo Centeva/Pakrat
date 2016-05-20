@@ -107,6 +107,13 @@ namespace Packrat
         private static void Unpack(string folder)
         {
             var manifestPath = AbsolutePath(folder, "Manifest.json");
+
+            if (!File.Exists(manifestPath))
+            {
+                Console.WriteLine("Could not find manifest file. Assuming that this folder is not packed.");
+                return;
+            }
+
             var json = File.ReadAllText(manifestPath);
             var manifest = JsonConvert.DeserializeObject<FolderManifest>(json);
 

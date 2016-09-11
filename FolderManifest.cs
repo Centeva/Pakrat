@@ -14,18 +14,15 @@ namespace Packrat
         }
 
         // Constructor to use when creating a new manifest
-        public FolderManifest(string folder)
+        public FolderManifest(PackList packList)
         {
-            folder = EndWithPathSep(folder);
-            ComputeHashes(folder);
+            ComputeHashes(packList.BasePath, packList.Files);
         }
 
-        private void ComputeHashes(string folder)
+        private void ComputeHashes(string basePath, IEnumerable<string> files)
         {
-            var files = Directory.EnumerateFiles(folder, "*.*", SearchOption.AllDirectories);
-
             var groupedHashes = files.AsParallel()
-                .Select(file => new Tuple<string, string>(HashFile(file), RelativePath(folder, file)))
+                .Select(file => new Tuple<string, string>(HashFile(file), file.RelativeTo(basePath)))
                 .GroupBy(t => t.Item1, t => t.Item2);
 
             foreach (var entry in groupedHashes)
@@ -44,23 +41,6 @@ namespace Packrat
                 byte[] hashBytes = hasher.ComputeHash(stream);
                 return hashBytes.Aggregate("", (s, b) => s + b.ToString("X2"));
             }
-        }
-        
-        private static string RelativePath(string rootPath, string path)
-        {
-            rootPath = EndWithPathSep(rootPath);
-
-            if (path.StartsWith(rootPath))
-            {
-                return path.Substring(rootPath.Length);
-            }
-
-            return path;
-        }
-
-        private static string EndWithPathSep(string path)
-        {
-            return path.EndsWith("\\") ? path : path + "\\";
         }
     }
 }

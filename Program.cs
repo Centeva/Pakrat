@@ -1,112 +1,184 @@
 ﻿using System;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
-using CommandLine;
 using Newtonsoft.Json;
 
 namespace Packrat
 {
     public class Program
     {
-        static int Main(string[] args)
+        public static int Main(string[] args)
         {
             var parsedArgs = ParseArgs(args);
-            if (parsedArgs == null)
-            {
-                return 1;
-            }
+            int exitCode;
 
-            if (!Directory.Exists(parsedArgs.Folder))
+            switch (parsedArgs.Command)
+            {
+                case Command.Pack:
+                    if (ValidateFolder(parsedArgs, out exitCode))
+                    {
+                        Pack(PackList.FromDirectory(parsedArgs.FolderOrFile), parsedArgs.DestinationFolder);
+                    }
+                    break;
+                case Command.PackList:
+                    if (ValidateFile(parsedArgs, out exitCode))
+                    {
+                        Pack(PackList.FromPackFile(parsedArgs.FolderOrFile), parsedArgs.DestinationFolder);
+                    }
+                    break;
+                case Command.Unpack:
+                    if (ValidateFolder(parsedArgs, out exitCode))
+                    {
+                        Unpack(parsedArgs.FolderOrFile);
+                    }
+                    break;
+                case Command.UnpackList:
+                    if (ValidateFile(parsedArgs, out exitCode))
+                    {
+                        Unpack(parsedArgs.FolderOrFile);
+                    }
+                    break;
+                default:
+                    PrintUsage();
+                    exitCode = 1;
+                    break;
+
+            }
+            return exitCode;
+        }
+
+        private static bool ValidateFolder(Args parsedArgs, out int exitCode)
+        {
+            if (!Directory.Exists(parsedArgs.FolderOrFile))
             {
                 Console.WriteLine("The specified folder does not exist");
-                return 2;
+                {
+                    exitCode = 2;
+                    return false;
+                }
             }
+            exitCode = 0;
+            return true;
+        }
 
-            if (string.Equals(parsedArgs.Verb, "pack", StringComparison.OrdinalIgnoreCase))
+        private static bool ValidateFile(Args parsedArgs, out int exitCode)
+        {
+            if (!File.Exists(parsedArgs.FolderOrFile))
             {
-                Pack(parsedArgs.Folder);
+                Console.WriteLine("The specified file does not exist");
+                {
+                    exitCode = 3;
+                    return false;
+                }
             }
-            else if (string.Equals(parsedArgs.Verb, "unpack", StringComparison.OrdinalIgnoreCase))
-            {
-                Unpack(parsedArgs.Folder);
-            }
-            else
-            {
-                Console.WriteLine("first argument must be either pack or unpack");
-                return 3;
-            }
-
-            return 0;
+            exitCode = 0;
+            return true;
         }
 
         private static Args ParseArgs(string[] args)
         {
-            string verb = null;
-            string folder = null;
-
-            try
+            if (args.Length == 0 || args.Length > 3)
             {
-                bool parseSuccess = Parser.Default.ParseArguments(
-                    args,
-                    new Options(),
-                    (v, o) =>
-                    {
-                        verb = v;
-                        if (o != null)
-                        {
-                            folder = ((PathOptions) o).Folder;
-                        }
-                    });
-
-                if (!parseSuccess)
-                {
-                    PrintUsage();
-                    return null;
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine(ex);
-                return null;
+                return Args.Invalid();
             }
 
-            return new Args(verb, folder);
+            string command = args[0];
+
+            // TODO: Handle both absolute and relative paths
+            string directory = args.Length == 1 ? Environment.CurrentDirectory : args[1];
+            string file = Path.Combine(args.Length == 1 ? Environment.CurrentDirectory : args[1]);
+            string destination = args.Length == 2 ? Environment.CurrentDirectory : args[2];
+
+            switch (command.ToLowerInvariant())
+            {
+                case "pack":
+                    return new Args(Command.Pack, directory, destination);
+                case "packlist":
+                    return new Args(Command.PackList, file, destination);
+                case "unpack":
+                    return new Args(Command.Unpack, directory, destination);
+                case "unpacklist":
+                    return new Args(Command.UnpackList, file, destination);
+                default:
+                    return Args.Invalid();
+            }
         }
 
         private static void PrintUsage()
         {
-            Console.WriteLine("Usage: packrat [pack|unpack] [folder]");
+            Console.WriteLine("Usage:");
+            Console.WriteLine("  packrat pack <folder> [destination]");
+            Console.WriteLine("  packrat unpack <folder> [destination]");
+            Console.WriteLine("  packrat packlist <packfile> <destination>");
+            Console.WriteLine("  packrat unpacklist <folder> <destination>");
+            Console.WriteLine("Notes:");
+            Console.WriteLine("  - If the destination folder is not specified it will default to the current directory");
+            Console.WriteLine("  - If the destination folder is specified and is different than the source directory all files in the destination will be automatically deleted when packing");
         }
 
-        private static void Pack(string folder)
+        private static void Pack(PackList packList, string destinationFolder)
         {
-            FolderManifest manifest = new FolderManifest(folder);
+            string sourceFolder = packList.BasePath.EndWithPathSep();
+            destinationFolder = destinationFolder.EndWithPathSep();
+            bool isInPlacePack = string.Equals(sourceFolder, destinationFolder, StringComparison.OrdinalIgnoreCase);
+            string manifestPath = Path.Combine(destinationFolder, "Manifest.json");
+
+            if (File.Exists(manifestPath) && isInPlacePack)
+            {
+                Console.WriteLine("Nothing to do since it looks like this folder is already packed.");
+                return; // Don't allow re-packing of already packed folder
+            }
+            else if (!isInPlacePack && Directory.Exists(destinationFolder))
+            {
+                Directory.Delete(destinationFolder, recursive: true);
+                // Testing has shown that a create directory immediately after the above delete doesn't always work because the file system 
+                // reports that it's still there.  Waiting for the directory reports that it no longer exists seems to get past this quirk.
+                // This issue has only been observed while debugging so far.
+                while (Directory.Exists(destinationFolder))
+                {
+                    Console.WriteLine("Waiting for destination folder to be deleted...");
+                    System.Threading.Thread.Sleep(10);
+                }
+            }
+
+            // Ensure that the destination directory exists -- This call should succeed if the directory already exists
+            Directory.CreateDirectory(destinationFolder);
+
+            FolderManifest manifest = new FolderManifest(packList);
             Parallel.ForEach(manifest, entry =>
             {
-                var src = AbsolutePath(folder, entry.Value[0]);
-                var dst = AbsolutePath(folder, entry.Key);
-                File.Copy(src, dst, true);
-
-                foreach (var dupe in entry.Value)
+                var src = entry.Value.First().ToAbsoluteFrom(sourceFolder);
+                var dst = entry.Key.ToAbsoluteFrom(destinationFolder);
+                if (src != dst)
                 {
-                    File.Delete(AbsolutePath(folder, dupe));
+                    File.Copy(src, dst, overwrite: true);
+
+                    // Only delete if we are doing an in-place pack
+                    if (isInPlacePack)
+                    {
+                        foreach (var dupe in entry.Value)
+                        {
+                            File.Delete(dupe.ToAbsoluteFrom(sourceFolder));
+                        }
+                    }
                 }
             });
 
             // Now that all the files have been moved out, removed folders that got left behind
-            foreach (var orphanFolder in Directory.GetDirectories(folder))
+            foreach (var orphanFolder in Directory.EnumerateDirectories(sourceFolder, "*.*", SearchOption.AllDirectories).Where(f => !Directory.EnumerateFiles(f, "*.*", SearchOption.AllDirectories).Any()))
             {
                 Directory.Delete(orphanFolder, true);
             }
 
             var json = JsonConvert.SerializeObject(manifest, Formatting.Indented);
-            File.WriteAllText(AbsolutePath(folder, "Manifest.json"), json, Encoding.UTF8);
+            File.WriteAllText(manifestPath, json, Encoding.UTF8);
         }
 
         private static void Unpack(string folder)
         {
-            var manifestPath = AbsolutePath(folder, "Manifest.json");
+            var manifestPath = "Manifest.json".ToAbsoluteFrom(folder);
 
             if (!File.Exists(manifestPath))
             {
@@ -119,38 +191,25 @@ namespace Packrat
 
             Parallel.ForEach(manifest, entry =>
             {
-                var srcFile = AbsolutePath(folder, entry.Key);
+                var srcFile = entry.Key.ToAbsoluteFrom(folder);
                 foreach (var target in entry.Value)
                 {
-                    var dstFile = AbsolutePath(folder, target);
-                    var dstFolder = Path.GetDirectoryName(dstFile) ?? folder;
-                    if (!Directory.Exists(dstFolder))
+                    var dstFile = target.ToAbsoluteFrom(folder);
+                    if (srcFile != dstFile)
                     {
-                        Directory.CreateDirectory(dstFolder);
+                        var dstFolder = Path.GetDirectoryName(dstFile) ?? folder;
+                        if (!Directory.Exists(dstFolder))
+                        {
+                            Directory.CreateDirectory(dstFolder);
+                        }
+                        File.Copy(srcFile, dstFile, true);
                     }
-                    File.Copy(srcFile, dstFile, true);
+
                 }
                 File.Delete(srcFile);
             });
 
             File.Delete(manifestPath);
-        }
-
-        private static string AbsolutePath(string folder, string file)
-        {
-            return Path.Combine(folder, file);
-        }
-
-        private class Args
-        {
-            public Args(string verb, string folder)
-            {
-                Verb = verb;
-                Folder = folder;
-            }
-
-            public string Verb { get; }
-            public string Folder { get; }
         }
     }
 }

@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<package >
+  <metadata>
+    <id>Centeva.Ct-Packrat</id>
+    <version>$version$</version>
+    <title>Ct-Packrat</title>
+    <authors>Centeva</authors>
+    <owners>Centeva</owners>
+	<requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <projectUrl>https://github.com/Centeva/Pakrat</projectUrl>
+    <description>A compression tool.</description>
+	<copyright>Copyright © Centeva 2016</copyright>
+  </metadata>
+	<files>
+		<file src="bin/Release/Pakrat.exe" target="tools"/>
+	</files>
+</package>
